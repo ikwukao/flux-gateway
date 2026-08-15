@@ -15,19 +15,22 @@ type Gateway struct {
 	circuitBreaker *resilience.CircuitBreaker
 	proxy          *proxy.GatewayHandler
 	metrics        *telemetry.Metrics
+	failOpen       bool
 }
 
 func New(
-	limiter *limiter.RedisLimiter,
+	rateLimiter *limiter.RedisLimiter,
 	circuitBreaker *resilience.CircuitBreaker,
 	proxyHandler *proxy.GatewayHandler,
 	metrics *telemetry.Metrics,
+	failOpen bool,
 ) *Gateway {
 	return &Gateway{
-		limiter:        limiter,
+		limiter:        rateLimiter,
 		circuitBreaker: circuitBreaker,
 		proxy:          proxyHandler,
 		metrics:        metrics,
+		failOpen:       failOpen,
 	}
 }
 
@@ -37,6 +40,7 @@ func (g *Gateway) ServeHTTP(
 ) {
 	start := time.Now()
 
+	// 1. Rate limiting.
 	if g.limiter != nil {
 		allowed, err := g.limiter.Allow(
 			r.Context(),
@@ -44,17 +48,19 @@ func (g *Gateway) ServeHTTP(
 		)
 
 		if err != nil {
-			g.metrics.RecordError("rate_limiter")
-			http.Error(
-				w,
-				"rate limiter unavailable",
-				http.StatusServiceUnavailable,
-			)
-			return
-		}
+			g.recordError("rate_limiter")
 
-		if !allowed {
-			g.metrics.RecordRateLimitRejection(r.RemoteAddr)
+			if !g.failOpen {
+				http.Error(
+					w,
+					"rate limiter unavailable",
+					http.StatusServiceUnavailable,
+				)
+				return
+			}
+		} else if !allowed {
+			g.recordRateLimitRejection(r.RemoteAddr)
+
 			http.Error(
 				w,
 				"rate limit exceeded",
@@ -64,9 +70,11 @@ func (g *Gateway) ServeHTTP(
 		}
 	}
 
+	// 2. Circuit breaker.
 	if g.circuitBreaker != nil {
 		if !g.circuitBreaker.Allow() {
-			g.metrics.RecordError("circuit_breaker")
+			g.recordError("circuit_breaker")
+
 			http.Error(
 				w,
 				"upstream unavailable",
@@ -76,6 +84,19 @@ func (g *Gateway) ServeHTTP(
 		}
 	}
 
+	// 3. Validate the upstream handler.
+	if g.proxy == nil {
+		g.recordError("proxy")
+
+		http.Error(
+			w,
+			"gateway misconfigured",
+			http.StatusInternalServerError,
+		)
+		return
+	}
+
+	// 4. Forward the request and capture the upstream response.
 	recorder := &responseRecorder{
 		ResponseWriter: w,
 		statusCode:     http.StatusOK,
@@ -83,6 +104,7 @@ func (g *Gateway) ServeHTTP(
 
 	g.proxy.ServeHTTP(recorder, r)
 
+	// 5. Update circuit-breaker state based on upstream outcome.
 	if g.circuitBreaker != nil {
 		if recorder.statusCode >= http.StatusInternalServerError {
 			g.circuitBreaker.RecordFailure()
@@ -91,23 +113,61 @@ func (g *Gateway) ServeHTTP(
 		}
 	}
 
-	g.metrics.RecordRequest(
+	// 6. Record request metrics.
+	g.recordRequest(
 		r.Method,
 		recorder.statusCode,
 		time.Since(start),
 	)
 }
 
+func (g *Gateway) recordError(component string) {
+	if g.metrics != nil {
+		g.metrics.RecordError(component)
+	}
+}
+
+func (g *Gateway) recordRateLimitRejection(client string) {
+	if g.metrics != nil {
+		g.metrics.RecordRateLimitRejection(client)
+	}
+}
+
+func (g *Gateway) recordRequest(
+	method string,
+	statusCode int,
+	duration time.Duration,
+) {
+	if g.metrics != nil {
+		g.metrics.RecordRequest(
+			method,
+			statusCode,
+			duration,
+		)
+	}
+}
+
 type responseRecorder struct {
 	http.ResponseWriter
-	statusCode int
+	statusCode  int
+	wroteHeader bool
 }
 
 func (r *responseRecorder) WriteHeader(statusCode int) {
+	if r.wroteHeader {
+		return
+	}
+
 	r.statusCode = statusCode
+	r.wroteHeader = true
+
 	r.ResponseWriter.WriteHeader(statusCode)
 }
 
 func (r *responseRecorder) Write(body []byte) (int, error) {
+	if !r.wroteHeader {
+		r.WriteHeader(http.StatusOK)
+	}
+
 	return r.ResponseWriter.Write(body)
 }
