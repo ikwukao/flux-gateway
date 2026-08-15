@@ -23,6 +23,8 @@ type CircuitBreaker struct {
 
 	failures int
 	openedAt time.Time
+
+	halfOpenProbe bool
 }
 
 func NewCircuitBreaker(
@@ -54,12 +56,18 @@ func (cb *CircuitBreaker) Allow() bool {
 	case StateOpen:
 		if time.Since(cb.openedAt) >= cb.openTimeout {
 			cb.state = StateHalfOpen
+			cb.halfOpenProbe = true
 			return true
 		}
 
 		return false
 
 	case StateHalfOpen:
+		if cb.halfOpenProbe {
+			return false
+		}
+
+		cb.halfOpenProbe = true
 		return true
 
 	default:
@@ -74,6 +82,7 @@ func (cb *CircuitBreaker) RecordSuccess() {
 	cb.state = StateClosed
 	cb.failures = 0
 	cb.openedAt = time.Time{}
+	cb.halfOpenProbe = false
 }
 
 func (cb *CircuitBreaker) RecordFailure() {
@@ -83,6 +92,7 @@ func (cb *CircuitBreaker) RecordFailure() {
 	if cb.state == StateHalfOpen {
 		cb.state = StateOpen
 		cb.openedAt = time.Now()
+		cb.halfOpenProbe = false
 		return
 	}
 
@@ -95,5 +105,6 @@ func (cb *CircuitBreaker) RecordFailure() {
 	if cb.failures >= cb.failureThreshold {
 		cb.state = StateOpen
 		cb.openedAt = time.Now()
+		cb.halfOpenProbe = false
 	}
 }

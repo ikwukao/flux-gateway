@@ -103,3 +103,25 @@ func TestCircuitBreakerHalfOpenFailureReopensCircuit(t *testing.T) {
 		t.Fatal("Allow() = true, want false after half-open failure")
 	}
 }
+
+func TestCircuitBreakerAllowsOnlyOneHalfOpenProbe(t *testing.T) {
+	cb := NewCircuitBreaker(1, 20*time.Millisecond)
+
+	cb.RecordFailure()
+
+	time.Sleep(30 * time.Millisecond)
+
+	if !cb.Allow() {
+		t.Fatal("first half-open request was rejected")
+	}
+
+	if cb.Allow() {
+		t.Fatal("second half-open request was allowed")
+	}
+
+	cb.RecordSuccess()
+
+	if !cb.Allow() {
+		t.Fatal("request after successful recovery was rejected")
+	}
+}
