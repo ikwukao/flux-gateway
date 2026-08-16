@@ -119,3 +119,55 @@ func TestHealthProberStopsWithContext(t *testing.T) {
 		t.Fatal("health prober did not stop after context cancellation")
 	}
 }
+
+func TestHealthProberTreatsRedirectAsUnhealthy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(
+		w http.ResponseWriter,
+		r *http.Request,
+	) {
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+
+	client := server.Client()
+	client.CheckRedirect = func(
+		req *http.Request,
+		via []*http.Request,
+	) error {
+		return http.ErrUseLastResponse
+	}
+
+	cb := NewCircuitBreaker(1, time.Second)
+
+	hp := NewHealthProber(
+		server.URL,
+		time.Second,
+		client,
+		cb,
+	)
+
+	hp.check(context.Background())
+
+	if got := cb.State(); got != StateOpen {
+		t.Fatalf("State() = %v, want %v", got, StateOpen)
+	}
+}
+
+func TestHealthProberUsesDefaultInterval(t *testing.T) {
+	cb := NewCircuitBreaker(1, time.Second)
+
+	hp := NewHealthProber(
+		"http://127.0.0.1:1",
+		0,
+		nil,
+		cb,
+	)
+
+	if hp.interval != 10*time.Second {
+		t.Fatalf(
+			"interval = %v, want %v",
+			hp.interval,
+			10*time.Second,
+		)
+	}
+}

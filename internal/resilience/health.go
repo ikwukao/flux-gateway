@@ -25,6 +25,10 @@ func NewHealthProber(
 		}
 	}
 
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+
 	return &HealthProber{
 		targetURL: targetURL,
 		interval:  interval,
@@ -34,6 +38,10 @@ func NewHealthProber(
 }
 
 func (hp *HealthProber) Start(ctx context.Context) {
+	if hp == nil || hp.cb == nil {
+		return
+	}
+
 	ticker := time.NewTicker(hp.interval)
 	defer ticker.Stop()
 
@@ -49,6 +57,10 @@ func (hp *HealthProber) Start(ctx context.Context) {
 }
 
 func (hp *HealthProber) check(ctx context.Context) {
+	if hp == nil || hp.cb == nil {
+		return
+	}
+
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodGet,
@@ -68,12 +80,8 @@ func (hp *HealthProber) check(ctx context.Context) {
 
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= http.StatusInternalServerError {
-		hp.cb.RecordFailure()
-		return
-	}
-
-	if resp.StatusCode >= http.StatusBadRequest {
+	if resp.StatusCode < http.StatusOK ||
+		resp.StatusCode >= http.StatusMultipleChoices {
 		hp.cb.RecordFailure()
 		return
 	}
