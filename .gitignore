@@ -29,3 +29,11 @@ Thumbs.db
 
 # Editor swap files
 *.swp
+
+.git
+.github
+*.md
+*.log
+gateway
+bin/
+tmp/
