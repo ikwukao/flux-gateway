@@ -19,6 +19,7 @@ import (
 	"flux-gateway/internal/telemetry"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -66,9 +67,16 @@ func main() {
 		true,
 	)
 
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", healthHandler)
+	mux.HandleFunc("/ready", readyHandler)
+	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/", gatewayHandler)
+
 	server := &http.Server{
 		Addr:              ":" + strconv.Itoa(cfg.ServerPort),
-		Handler:           gatewayHandler,
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -121,4 +129,18 @@ func main() {
 	}
 
 	log.Println("flux-gateway stopped")
+}
+
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+func readyHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	_, _ = w.Write([]byte(`{"status":"ready"}`))
 }
