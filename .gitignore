@@ -18,21 +18,22 @@ deployments/data/
 # Environment files
 .env
 
-# IDEs
-.idea/
-.vscode/
-.goland/
-
 # OS files
 .DS_Store
 Thumbs.db
 
-# Editor swap files
+# JetBrains / VSCode Workspace Directories
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
 *.swp
 
+# Other Essntials
 .git
 .github
-*.md
 *.log
 gateway
 bin/
